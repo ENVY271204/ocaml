@@ -141,6 +141,7 @@ let dump_regalloc = ref false           (* -dalloc *)
 let dump_reload = ref false             (* -dreload *)
 let dump_scheduling = ref false         (* -dscheduling *)
 let dump_linear = ref false             (* -dlinear *)
+let dump_llvm = ref false               (* -dllvm *)
 let keep_startup_file = ref false       (* -dstartup *)
 let profile_columns : Profile.column list ref = ref [] (* -dprofile/-dtimings *)
 

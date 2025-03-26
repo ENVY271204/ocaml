@@ -72,6 +72,7 @@ let main() =
      "-dreload", Arg.Set dump_reload, "";
      "-dscheduling", Arg.Set dump_scheduling, "";
      "-dlinear", Arg.Set dump_linear, "";
+     "-dllvm", Arg.Set dump_llvm, "";
      "-dtimings", Arg.Unit (fun () -> profile_columns := [ `Time ]), "";
     ] compile_file usage
 

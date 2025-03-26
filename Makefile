@@ -264,6 +264,7 @@ asmcomp_SOURCES = \
   asmcomp/printlinear.mli asmcomp/printlinear.ml \
   asmcomp/linearize.mli asmcomp/linearize.ml \
   file_formats/linear_format.mli file_formats/linear_format.ml \
+	asmcomp/printllvm.mli asmcomp/printllvm.ml \
   asmcomp/schedgen.mli asmcomp/schedgen.ml \
   asmcomp/scheduling.mli asmcomp/scheduling.ml \
   asmcomp/branch_relaxation.mli asmcomp/branch_relaxation.ml \

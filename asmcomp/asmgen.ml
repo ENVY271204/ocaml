@@ -52,6 +52,10 @@ let pass_dump_linear_if ppf flag message phrase =
   if !flag then fprintf ppf "*** %s@.%a@." message Printlinear.fundecl phrase;
   phrase
 
+let pass_dump_llvm_if ppf flag message phrase =
+  if !flag then fprintf ppf "*** %s@.%a@." message Printllvm.fundecl phrase;
+  phrase
+
 let start_from_emit = ref true
 
 let should_save_before_emit () =
@@ -159,6 +163,7 @@ let compile_fundecl ~ppf_dump ~funcnames fd_cmm =
   ++ Profile.record ~accumulate:true "regalloc" (regalloc ~ppf_dump 1)
   ++ Profile.record ~accumulate:true "linearize" Linearize.fundecl
   ++ pass_dump_linear_if ppf_dump dump_linear "Linearized code"
+  ++ pass_dump_llvm_if ppf_dump dump_llvm "LLVM IR"
   ++ Profile.record ~accumulate:true "scheduling" Scheduling.fundecl
   ++ pass_dump_linear_if ppf_dump dump_scheduling "After instruction scheduling"
   ++ save_linear
