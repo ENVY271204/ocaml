@@ -58,16 +58,12 @@ let instr ppf i =
 let rec all_instr ppf i =
   match i.desc with
   | Lend -> ()
-  | _ -> 
-      fprintf ppf "%a@," instr i;
-      all_instr ppf i.next
+  | _ -> fprintf ppf "%a@,%a" instr i all_instr i.next
 
-(* Main entry point *)
 let fundecl ppf f =
   reg_counter := 0;
   Hashtbl.clear reg_names;
-  fprintf ppf "; Function: %s@," f.fun_name;
+  fprintf ppf "@[<v 2>; Function: %s@," f.fun_name;  (* Open vertical box *)
   fprintf ppf "define i32 @%s() {@," f.fun_name;
-  fprintf ppf "entry:@,";
-  all_instr ppf f.fun_body;
+  fprintf ppf "entry:@,%a@]@," all_instr f.fun_body;  (* Close box *)
   fprintf ppf "}@,"
