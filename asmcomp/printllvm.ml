@@ -16,6 +16,37 @@ let get_reg_name reg =
 
 let label_name lbl = "L" ^ string_of_int lbl
 
+(* Helper functions to convert Cmm comparisons to LLVM predicates *)
+
+let llvm_int_pred = function
+  | Cmm.Ceq -> "eq"
+  | Cmm.Cne -> "ne"
+  | Cmm.Clt -> "slt"
+  | Cmm.Cle -> "sle"
+  | Cmm.Cgt -> "sgt"
+  | Cmm.Cge -> "sge"
+
+let llvm_uint_pred = function
+  | Cmm.Ceq -> "eq"
+  | Cmm.Cne -> "ne"
+  | Cmm.Clt -> "ult"
+  | Cmm.Cle -> "ule"
+  | Cmm.Cgt -> "ugt"
+  | Cmm.Cge -> "uge"
+
+let llvm_float_pred = function
+  | Cmm.CFeq -> "oeq"
+  | Cmm.CFneq -> "une"
+  | Cmm.CFlt -> "olt"
+  | Cmm.CFnlt -> "uge"  (* Not less than = greater or equal *)
+  | Cmm.CFle -> "ole"
+  | Cmm.CFnle -> "ugt"  (* Not less or equal = greater *)
+  | Cmm.CFgt -> "ogt"
+  | Cmm.CFngt -> "ule"  (* Not greater than = less or equal *)
+  | Cmm.CFge -> "oge"
+  | Cmm.CFnge -> "ult"  (* Not greater or equal = less than *)
+
+
 (* Print Linear operation as LLVM instruction *)
 let print_operation ppf (op, args, res) =
     (* Create mapping from register names to argument indices *)
@@ -138,7 +169,8 @@ let print_operation ppf (op, args, res) =
 
   | _ -> fprintf ppf "; UNSUPPORTED OPERATION"
 
-(* Print Linear instruction as LLVM IR *)
+
+  (* Print Linear instruction as LLVM IR *)
 let instr ppf i =
   match i.desc with
   | Lend -> ()
@@ -169,22 +201,67 @@ let instr ppf i =
 
   | Lbranch lbl ->
       fprintf ppf "  br label %%%s@," (label_name lbl)
-(* 
-  | Lcondbranch (tst, lbl) ->
-      let cmp = match tst with
-        | Mach.Iunsigned -> "ugt"
-        | Mach.Ifloat -> "ogt"
-        | _ -> "sgt" in
-      fprintf ppf "  %%cond = icmp %s i32 %s, 0@,  br i1 %%cond, label %%%s, label %%next@,"
-        cmp (get_reg_name i.arg.(0)) (label_name lbl)
+ 
+  | Lcondbranch(tst, lbl) ->
+    let cmp_reg = !reg_counter in
+    incr reg_counter;
+    
+    (match tst with
+      | Mach.Itruetest ->
+          fprintf ppf "%%cond_%d = icmp ne i32 %s, 0@," 
+            cmp_reg (get_reg_name i.arg.(0))
+      
+      | Mach.Ifalsetest ->
+          fprintf ppf "%%cond_%d = icmp eq i32 %s, 0@," 
+            cmp_reg (get_reg_name i.arg.(0))
+      
+      | Mach.Iinttest cmp ->
+        let pred = match cmp with
+          | Mach.Isigned c -> llvm_int_pred c
+          | Mach.Iunsigned c -> llvm_uint_pred c in
+        fprintf ppf "%%cond_%d = icmp %s i32 %s, %s@," 
+          cmp_reg pred (get_reg_name i.arg.(0)) (get_reg_name i.arg.(1))
+      
+      | Mach.Iinttest_imm(cmp, n) ->
+        let pred = match cmp with
+          | Mach.Isigned c -> llvm_int_pred c
+          | Mach.Iunsigned c -> llvm_uint_pred c in
+        fprintf ppf "%%cond_%d = icmp %s i32 %s, %d@," 
+          cmp_reg pred (get_reg_name i.arg.(0)) n
+      
+      | Mach.Ifloattest cmp ->
+          let pred = llvm_float_pred cmp in
+          fprintf ppf "%%cond_%d = fcmp %s double %s, %s@," 
+            cmp_reg pred (get_reg_name i.arg.(0)) (get_reg_name i.arg.(1))
+      
+      | Mach.Ieventest ->
+          fprintf ppf "%%and_%d = and i32 %s, 1@," 
+            cmp_reg (get_reg_name i.arg.(0));
+          fprintf ppf "%%cond_%d = icmp eq i32 %%and_%d, 0@," 
+            cmp_reg cmp_reg
+      
+      | Mach.Ioddtest ->
+          fprintf ppf "%%and_%d = and i32 %s, 1@," 
+            cmp_reg (get_reg_name i.arg.(0));
+          fprintf ppf "%%cond_%d = icmp ne i32 %%and_%d, 0@," 
+            cmp_reg cmp_reg);
+    
+    fprintf ppf "br i1 %%cond_%d, label %%%s, label %%next@," 
+      cmp_reg (label_name lbl)
 
-  | Lcondbranch3 (lbl0, lbl1, lbl2) ->
-      fprintf ppf "  switch i32 %s, label %%next [@,\
-                    i32 0, label %%%s@,\
-                    i32 1, label %%%s@,\
-                    i32 2, label %%%s@,]@,"
-        (get_reg_name i.arg.(0))
-        (label_name lbl0) (label_name lbl1) (label_name lbl2) *)
+  | Lcondbranch3(lbl0, lbl1, lbl2) ->
+      fprintf ppf "  switch i32 %s, label %%next [@,"
+        (get_reg_name i.arg.(0));
+      let emit_case idx lbl_opt =
+        match lbl_opt with
+        | Some lbl ->
+            fprintf ppf "    i32 %d, label %%%s@," idx (label_name lbl)
+        | None -> ()
+      in
+      emit_case 0 lbl0;
+      emit_case 1 lbl1;
+      emit_case 2 lbl2;
+      fprintf ppf "  ]@,"
 
   | Lswitch lblv ->
       fprintf ppf "  switch i32 %s, label %%default [@," (get_reg_name i.arg.(0));
@@ -211,7 +288,6 @@ let instr ppf i =
         | Lambda.Raise_reraise -> "reraise"
         | Lambda.Raise_notrace -> "raise_notrace" in
       fprintf ppf "  ; %s %s@," raise_str (get_reg_name i.arg.(0))
-  | _ -> fprintf ppf "Unsupported instruction ; @,"
   ;
   if not (Debuginfo.is_none i.dbg) && !Clflags.locations then
     fprintf ppf "  ; %s@," (Debuginfo.to_string i.dbg)
