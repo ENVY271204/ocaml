@@ -62,6 +62,30 @@ let print_operation ppf (op, args, res) =
       fprintf ppf "%s = add i32 %s, 0"
         (get_reg_name res.(0)) (get_reg_name args.(0))
 
+  | Mach.Ispill ->
+    fprintf ppf "%s = alloca i32, align 4@,store i32 %s, i32* %s"
+      (get_reg_name res.(0)) (get_reg_name args.(0)) (get_reg_name res.(0))
+
+  | Mach.Ireload ->
+      fprintf ppf "%s = load i32, i32* %s" 
+        (get_reg_name res.(0)) (get_reg_name args.(0))
+
+  | Mach.Iconst_int n ->
+    fprintf ppf "%s = add i32 0, %nd"
+      (get_reg_name res.(0)) n
+
+  | Mach.Iconst_float f ->
+    fprintf ppf "%s = bitcast i64 %Ld to double" 
+      (get_reg_name res.(0)) f
+
+  | Mach.Iconst_symbol s ->
+    fprintf ppf "@%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"@," 
+      s (String.length s + 1) s;
+    fprintf ppf "%s = getelementptr inbounds [%d x i8], [%d x i8]* @%s, i64 0, i64 0"
+      (get_reg_name res.(0)) 
+      (String.length s + 1) (String.length s + 1) s
+    
+
   | Mach.Iintop Mach.Iadd ->
       fprintf ppf "%s = add i32 %s, %s"
         (get_reg_name res.(0)) (get_reg_name args.(0)) (get_reg_name args.(1))
@@ -74,33 +98,29 @@ let print_operation ppf (op, args, res) =
       fprintf ppf "%s = mul i32 %s, %s"
         (get_reg_name res.(0)) (get_reg_name args.(0)) (get_reg_name args.(1))
 
-  | Mach.Iconst_int n ->
-      fprintf ppf "%s = add i32 0, %nd"
-        (get_reg_name res.(0)) n
-
   | Mach.Iload { memory_chunk; addressing_mode; mutability; is_atomic } ->
-    let ty, _ = match memory_chunk with
-      | Cmm.Byte_unsigned -> ("i8", " zext")
-      | Cmm.Byte_signed -> ("i8", " sext")
-      | Cmm.Sixteen_unsigned -> ("i16", " zext")
-      | Cmm.Sixteen_signed -> ("i16", " sext")
-      | Cmm.Thirtytwo_unsigned -> ("i32", " zext")
-      | Cmm.Thirtytwo_signed -> ("i32", " sext")
-      | Cmm.Word_int -> ("i64", "")    (* OCaml unboxed integers *)
-      | Cmm.Word_val -> ("i64", "")    (* OCaml boxed values *)
-      | _ -> ("i32", "") in
-    
-    let addr_str = match addressing_mode with
-      | Arch.Ibased(base_name, displ) ->
-          let base_idx = Hashtbl.find reg_name_to_index base_name in
-          let base_reg = get_reg_name args.(base_idx) in
-          fprintf ppf "%%addr_%d = getelementptr i8, i8* %s, i32 %d@,"
-            !reg_counter base_reg displ;
-          sprintf "%%addr_%d" !reg_counter
-      | _ -> get_reg_name args.(0) in
-    
-    let atomic = if is_atomic then " atomic" else "" in
-    let ordering = if is_atomic then " monotonic" else "" in
+      let ty, _ = match memory_chunk with
+        | Cmm.Byte_unsigned -> ("i8", " zext")
+        | Cmm.Byte_signed -> ("i8", " sext")
+        | Cmm.Sixteen_unsigned -> ("i16", " zext")
+        | Cmm.Sixteen_signed -> ("i16", " sext")
+        | Cmm.Thirtytwo_unsigned -> ("i32", " zext")
+        | Cmm.Thirtytwo_signed -> ("i32", " sext")
+        | Cmm.Word_int -> ("i64", "")    (* OCaml unboxed integers *)
+        | Cmm.Word_val -> ("i64", "")    (* OCaml boxed values *)
+        | _ -> ("i32", "") in
+      
+      let addr_str = match addressing_mode with
+        | Arch.Ibased(base_name, displ) ->
+            let base_idx = Hashtbl.find reg_name_to_index base_name in
+            let base_reg = get_reg_name args.(base_idx) in
+            fprintf ppf "%%addr_%d = getelementptr i8, i8* %s, i32 %d@,"
+              !reg_counter base_reg displ;
+            sprintf "%%addr_%d" !reg_counter
+        | _ -> get_reg_name args.(0) in
+      
+      let atomic = if is_atomic then " atomic" else "" in
+      let ordering = if is_atomic then " monotonic" else "" in
     
     fprintf ppf "%%ptr_%d = bitcast i8* %s to %s*@,\
                 %s = load%s%s %s, %s* %%ptr_%d align 1@,\
@@ -155,23 +175,54 @@ let print_operation ppf (op, args, res) =
             ty (get_reg_name args.(0)) ty ptr_reg align
             (if is_assign then "assignment" else "initialization");
           incr reg_counter;  (* Increment after ptr_reg *)
-      
-            
 
-  (* | Mach.Icall_ind | Mach.Icall_imm _ | Mach.Iextcall _ ->
-      let callee = match op with
-        | Mach.Icall_imm func -> "@" ^ func
-        | Mach.Iextcall (func, _) -> "@" ^ func
-        | _ -> get_reg_name args.(0) in
-      fprintf ppf "%s = call i32 %s(%a)"
-        (get_reg_name res.(0)) callee
-        (pp_print_array ~pp_sep:(fun ppf () -> fprintf ppf ", ") get_reg_name) args *)
+  | Mach.Icall_ind ->
+    let args_str = 
+      Array.sub args 1 (Array.length args - 1)
+      |> Array.map get_reg_name
+      |> Array.to_list  
+      |> String.concat ", " in
+    fprintf ppf "%s = call fastcc i32 %s(%s)"
+      (get_reg_name res.(0)) 
+      (get_reg_name args.(0))
+      args_str
+
+  | Mach.Icall_imm { func } ->
+      let args_str = 
+        Array.map get_reg_name args
+        |> Array.to_list  (* Convert array to list *)
+        |> String.concat ", " in
+      fprintf ppf "%s = call fastcc i32 @%s(%s)"
+        (get_reg_name res.(0)) 
+        func
+        args_str
+
+  | Mach.Itailcall_ind ->
+      let args_str = 
+        Array.sub args 1 (Array.length args - 1)
+        |> Array.map get_reg_name
+        |> Array.to_list  (* Convert array to list *)
+        |> String.concat ", " in
+      fprintf ppf "tail call fastcc i32 %s(%s)"
+        (get_reg_name args.(0))
+        args_str
+
+  | Mach.Itailcall_imm { func } ->
+      let args_str = 
+        Array.map get_reg_name args
+        |> Array.to_list  (* Convert array to list *)
+        |> String.concat ", " in
+      fprintf ppf "tail call fastcc i32 @%s(%s)"
+        func
+        args_str
 
   | _ -> fprintf ppf "; UNSUPPORTED OPERATION"
 
 
+
+
   (* Print Linear instruction as LLVM IR *)
-let instr ppf i =
+  let instr ppf i =
   match i.desc with
   | Lend -> ()
 
